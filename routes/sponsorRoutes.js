@@ -1,119 +1,47 @@
-// // backend/routes/sponsorRoutes.js
-// const express = require('express');
-// const router = express.Router();
-// const multer = require('multer');
-// const path = require('path');
-// const fs = require('fs');
-
-// const Sponsor = require('../models/Sponsor');
-
-// // Configure multer storage
-// const storage = multer.diskStorage({
-//   destination: function (req, file, cb) {
-//     // Adjust destination path as needed
-//     cb(null, path.join(__dirname, '../../uploads/sponsors'));
-//   },
-//   filename: function (req, file, cb) {
-//     // Generate a unique suffix
-//     const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
-//     // Preserve file extension
-//     const ext = path.extname(file.originalname);
-//     cb(null, uniqueSuffix + ext);
-//   },
-// });
-
-// const upload = multer({ storage });
-
-// // @route  GET /api/sponsors
-// // @desc   Get all sponsors
-// // @access Admin
-// router.get('/', async (req, res) => {
-//   try {
-//     const sponsors = await Sponsor.find().sort({ createdAt: -1 });
-//     res.json(sponsors);
-//   } catch (err) {
-//     console.error(err);
-//     res.status(500).json({ error: 'Server error' });
-//   }
-// });
-
-// // @route  POST /api/sponsors
-// // @desc   Create a sponsor (upload image file)
-// // @access Admin
-// router.post('/', upload.single('image'), async (req, res) => {
-//   try {
-//     if (!req.file) {
-//       return res.status(400).json({ error: 'No file uploaded' });
-//     }
-//     // Create a new sponsor doc with the filename
-//     const sponsor = await Sponsor.create({ filename: req.file.filename });
-//     res.json(sponsor);
-//   } catch (err) {
-//     console.error(err);
-//     res.status(500).json({ error: 'Server error' });
-//   }
-// });
-
-// // @route  DELETE /api/sponsors/:id
-// // @desc   Delete a sponsor and remove its file from disk
-// // @access Admin
-// router.delete('/:id', async (req, res) => {
-//   try {
-//     const sponsor = await Sponsor.findById(req.params.id);
-//     if (!sponsor) {
-//       return res.status(404).json({ error: 'Sponsor not found' });
-//     }
-
-//     // Path to the file on disk
-//     const filePath = path.join(__dirname, '../../uploads/sponsors', sponsor.filename);
-//     if (fs.existsSync(filePath)) {
-//       fs.unlinkSync(filePath);
-//     }
-
-//     // Delete from MongoDB
-//     await sponsor.remove();
-//     res.json({ message: 'Sponsor deleted successfully' });
-//   } catch (err) {
-//     console.error(err);
-//     res.status(500).json({ error: 'Server error' });
-//   }
-// });
-
-// module.exports = router;
-
 // backend/routes/sponsorRoutes.js
 const express = require('express');
 const router = express.Router();
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
-
 const Sponsor = require('../models/Sponsor');
+const { authenticate } = require('../middleware/auth');
+const { authorizeRoles } = require('../middleware/roleMiddleware');
 
-// Define the absolute path for the sponsors upload directory
-const uploadDir = path.join(__dirname, '../../uploads/sponsors');
+const uploadDir = path.join(__dirname, '../uploads/sponsors');
+fs.mkdirSync(uploadDir, { recursive: true });
 
-// Configure multer storage with automatic directory creation
 const storage = multer.diskStorage({
-  destination: function (req, file, cb) {
-    // Create the directory if it doesn't exist
-    fs.mkdirSync(uploadDir, { recursive: true });
+  destination: (req, file, cb) => {
     cb(null, uploadDir);
   },
-  filename: function (req, file, cb) {
-    // Generate a unique suffix and preserve the file extension
+  filename: (req, file, cb) => {
     const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
     const ext = path.extname(file.originalname);
     cb(null, uniqueSuffix + ext);
   },
 });
-
 const upload = multer({ storage });
 
-// @route  GET /api/sponsors
-// @desc   Get the current sponsor image (if any)
-// @access Admin
-router.get('/', async (req, res) => {
+/**
+ * 1) PUBLIC READ route – Anyone can list sponsor(s)
+ *    so that volunteers can display sponsor images in receipts
+ *    without "No sponsor found" / unauthorized error.
+ */
+router.get('/public', async (req, res) => {
+  try {
+    const sponsors = await Sponsor.find().sort({ createdAt: -1 });
+    res.json(sponsors);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Server error fetching public sponsor' });
+  }
+});
+
+/**
+ * 2) Protected GET route – master_admin/graphics can manage sponsor images
+ */
+router.get('/', authenticate, authorizeRoles('master_admin', 'graphics'), async (req, res) => {
   try {
     const sponsors = await Sponsor.find().sort({ createdAt: -1 });
     res.json(sponsors);
@@ -123,21 +51,18 @@ router.get('/', async (req, res) => {
   }
 });
 
-// @route  POST /api/sponsors
-// @desc   Create a sponsor image (upload image file) if one doesn't already exist
-// @access Admin
-router.post('/', upload.single('image'), async (req, res) => {
+/**
+ * 3) POST – only master_admin/graphics can upload a new sponsor image
+ */
+router.post('/', authenticate, authorizeRoles('master_admin', 'graphics'), upload.single('image'), async (req, res) => {
   try {
-    // Check if a sponsor image already exists
     const count = await Sponsor.countDocuments();
     if (count > 0) {
-      return res.status(400).json({ error: 'Only one sponsor image is allowed. Please delete the existing image first.' });
+      return res.status(400).json({ error: 'Only one sponsor image is allowed. Please delete the existing one first.' });
     }
-
     if (!req.file) {
       return res.status(400).json({ error: 'No file uploaded' });
     }
-    // Create a new sponsor document with the filename
     const sponsor = await Sponsor.create({ filename: req.file.filename });
     res.json(sponsor);
   } catch (err) {
@@ -146,23 +71,19 @@ router.post('/', upload.single('image'), async (req, res) => {
   }
 });
 
-// @route  DELETE /api/sponsors/:id
-// @desc   Delete a sponsor image and remove its file from disk
-// @access Admin
-router.delete('/:id', async (req, res) => {
+/**
+ * 4) DELETE – only master_admin/graphics can delete the sponsor image
+ */
+router.delete('/:id', authenticate, authorizeRoles('master_admin', 'graphics'), async (req, res) => {
   try {
     const sponsor = await Sponsor.findById(req.params.id);
     if (!sponsor) {
       return res.status(404).json({ error: 'Sponsor not found' });
     }
-
-    // Path to the file on disk
     const filePath = path.join(uploadDir, sponsor.filename);
     if (fs.existsSync(filePath)) {
       fs.unlinkSync(filePath);
     }
-
-    // Use deleteOne instead of remove
     await sponsor.deleteOne();
     res.json({ message: 'Sponsor deleted successfully' });
   } catch (err) {
