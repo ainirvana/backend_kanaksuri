@@ -1,50 +1,34 @@
 // // backend/models/CashDonation.js
-// const mongoose = require('mongoose');
-
-// const cashDonationSchema = new mongoose.Schema({
-//   volunteer: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
-//   name:      { type: String, required: true },
-//   phone:     { type: String, required: true },
-//   email:     { type: String },
-//   amount:    { type: Number, required: true },
-//   note:      { type: String },
-//   donationType: { type: String, default: 'cash' }, // "cash", "cheque", or "upi"
-//   bankName: { type: String },
-//   chequeNumber: { type: String },
-//   upiTransactionId: { type: String }, // New field for UPI donation
-//   aadharCard: { type: String }, // new optional field
-//   panCard: { type: String },    // new optional field
-//   status:    { type: String, default: 'collected' },
-//   createdAt: { type: Date, default: Date.now }
-// });
-
-// module.exports = mongoose.model('CashDonation', cashDonationSchema);
-
-// backend/models/CashDonation.js
 const mongoose = require('mongoose');
 const Counter = require('./Counter');
 
 const cashDonationSchema = new mongoose.Schema({
   volunteer: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
-  name:      { type: String, required: true },
-  phone:     { type: String, required: true },
-  email:     { type: String },
-  amount:    { type: Number, required: true },
-  note:      { type: String },
+  name: { type: String, required: true },
+  phone: { type: String, required: true },
+  email: { type: String },
+  city: { type: String }, // <-- NEW FIELD ADDED
+  amount: { type: Number, required: true },
+  note: { type: String },
   donationType: { type: String, default: 'cash' }, // "cash", "cheque", or "upi"
   bankName: { type: String },
   chequeNumber: { type: String },
-  upiTransactionId: { type: String }, // New field for UPI donation
-  aadharCard: { type: String }, // new optional field
-  panCard: { type: String },    // new optional field
-  status:    { type: String, default: 'collected' },
+  upiTransactionId: { type: String },
+  aadharCard: { type: String },
+  panCard: { type: String },
+  status: { type: String, default: 'collected' },
   createdAt: { type: Date, default: Date.now },
-  receiptNumber: { type: String } // This field will store the generated receipt number
+  receiptNumber: { type: String },
+  isDeleted: { type: Boolean, default: false },
+  depositAcknowledged: { type: Boolean, default: false },
+  depositNote: { type: String, default: "" },
+  depositVerified: { type: Boolean, default: false },
+  depositVerifiedAt: { type: Date },
+  depositVerifiedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }
 });
 
-// Pre-save hook to generate a sequential receipt number for volunteer donations
+// Receipt auto-generation
 cashDonationSchema.pre('save', async function(next) {
-  // Only run for new documents and if receiptNumber is not set
   if (!this.isNew || this.receiptNumber) return next();
   try {
     const counter = await Counter.findOneAndUpdate(
