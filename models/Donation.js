@@ -14,7 +14,8 @@ const donationSchema = new mongoose.Schema({
   createdAt: { type: Date, default: Date.now },
   receiptNumber: { type: String },
   aadharCard: { type: String }, // new optional field
-  panCard: { type: String }     // new optional field
+  panCard: { type: String },    // new optional field
+  isDeleted: { type: Boolean, default: false } // Soft deletion flag for online donations
 });
 
 module.exports = mongoose.model('Donation', donationSchema);
