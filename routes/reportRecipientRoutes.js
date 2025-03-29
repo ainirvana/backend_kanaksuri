@@ -2,9 +2,11 @@
 const express = require('express');
 const router = express.Router();
 const ReportRecipient = require('../models/ReportRecipient');
+const { authenticate } = require('../middleware/auth');
+const { authorizeRoles } = require('../middleware/roleMiddleware');
 
-// CREATE a new recipient
-router.post('/', async (req, res) => {
+// CREATE a new recipient – only master_admin
+router.post('/', authenticate, authorizeRoles('master_admin'), async (req, res) => {
   try {
     const { email, frequency, formats } = req.body;
     const existing = await ReportRecipient.findOne({ email });
@@ -19,8 +21,8 @@ router.post('/', async (req, res) => {
   }
 });
 
-// READ all recipients
-router.get('/', async (req, res) => {
+// READ all recipients – only master_admin
+router.get('/', authenticate, authorizeRoles('master_admin'), async (req, res) => {
   try {
     const recipients = await ReportRecipient.find().sort({ createdAt: -1 });
     res.json(recipients);
@@ -30,8 +32,8 @@ router.get('/', async (req, res) => {
   }
 });
 
-// UPDATE a recipient
-router.put('/:id', async (req, res) => {
+// UPDATE a recipient – only master_admin
+router.put('/:id', authenticate, authorizeRoles('master_admin'), async (req, res) => {
   try {
     const { email, frequency, formats } = req.body;
     const updated = await ReportRecipient.findByIdAndUpdate(
@@ -49,8 +51,8 @@ router.put('/:id', async (req, res) => {
   }
 });
 
-// DELETE a recipient
-router.delete('/:id', async (req, res) => {
+// DELETE a recipient – only master_admin
+router.delete('/:id', authenticate, authorizeRoles('master_admin'), async (req, res) => {
   try {
     const removed = await ReportRecipient.findByIdAndDelete(req.params.id);
     if (!removed) {
