@@ -5,7 +5,11 @@ const userSchema = new mongoose.Schema({
   username: { type: String, required: true, unique: true },
   email:    { type: String, required: true, unique: true },
   password: { type: String, required: true, select: false },
-  role:     { type: String, enum: ['admin', 'volunteer'], default: 'volunteer' },
+  role: {
+    type: String,
+    enum: ['master_admin', 'admin', 'accounts', 'trustee', 'graphics', 'volunteer'],
+    default: 'volunteer'
+  },
   firstTime: { type: Boolean, default: true },
   createdAt: { type: Date, default: Date.now }
 });
