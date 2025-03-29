@@ -1,52 +1,100 @@
 // backend/utils/reportJobs.js
 const nodemailer = require('nodemailer');
-const Donation = require('../models/Donation');    // or CashDonation, whichever you want
+const Donation = require('../models/Donation');
 const CashDonation = require('../models/CashDonation');
 const ReportRecipient = require('../models/ReportRecipient');
-const { Parser } = require('json2csv');  // or any other CSV library
+const User = require('../models/User');
+const { Parser } = require('json2csv');
 const dayjs = require('dayjs');
 
-const user = process.env.EMAIL_USER;   // e.g. Gmail
-const pass = process.env.EMAIL_PASS;   // your app password for Gmail
+const emailUser = process.env.EMAIL_USER;
+const emailPass = process.env.EMAIL_PASS;
 
-// Create a nodemailer transporter using Gmail
+// Configure Nodemailer transporter
 const transporter = nodemailer.createTransport({
   service: 'gmail',
   auth: {
-    user,
-    pass
+    user: emailUser,
+    pass: emailPass
   }
 });
 
-// A helper to generate CSV from donations
-function generateCsv(donations) {
-  const fields = [
-    { label: 'Name', value: 'name' },
-    { label: 'Email', value: 'email' },
-    { label: 'Amount', value: 'amount' },
-    { label: 'Note', value: 'note' },
-    { label: 'Status', value: 'status' },
-    { label: 'CreatedAt', value: (row) => row.createdAt ? new Date(row.createdAt).toLocaleString() : '' }
-  ];
-  const json2csvParser = new Parser({ fields });
-  const csv = json2csvParser.parse(donations);
-  return csv;
+// ---------------------------------------------
+// CSV Field Definitions
+// ---------------------------------------------
+// Trustee CSV (for admin/trustee reports)
+const trusteeFields = [
+  { label: 'Donation Type', value: row => row.donationType ? row.donationType.toUpperCase() : 'ONLINE' },
+  { label: 'Receipt Number', value: 'receiptNumber' },
+  { label: 'Name', value: 'name' },
+  { label: 'Whatsapp', value: row => row.whatsapp || '' },
+  { label: 'Phone', value: row => row.phone || '' },
+  { label: 'Email', value: 'email' },
+  { label: 'Amount', value: 'amount' },
+  { label: 'Note', value: 'note' },
+  { label: 'Status', value: 'status' },
+  { label: 'Created At', value: row => row.createdAt ? new Date(row.createdAt).toLocaleString() : '' },
+  { label: 'Bank Name', value: row => row.bankName || '' },
+  { label: 'Cheque Number', value: row => row.chequeNumber || '' },
+  { label: 'UPI Transaction ID', value: row => row.upiTransactionId || '' },
+  { label: 'Aadhar Card', value: row => row.aadharCard || '' },
+  { label: 'PAN Card', value: row => row.panCard || '' },
+  { label: 'Deposit Acknowledged', value: row => row.depositAcknowledged ? 'Yes' : 'No' },
+  { label: 'Deposit Note', value: row => row.depositNote || '' },
+  { label: 'Deposit Verified', value: row => row.depositVerified ? 'Yes' : 'No' },
+  { label: 'Deposit Verified At', value: row => row.depositVerifiedAt ? new Date(row.depositVerifiedAt).toLocaleString() : '' },
+  { label: 'Volunteer', value: row => (row.volunteer && row.volunteer.username) ? row.volunteer.username : '' },
+  { label: 'Order ID', value: row => row.order_id || '' },
+  { label: 'Payment ID', value: row => row.payment_id || '' },
+  { label: 'Razorpay Signature', value: row => row.razorpay_signature || '' }
+];
+
+// Volunteer CSV (for individual volunteer reports)
+const volunteerFields = [
+  { label: 'Receipt Number', value: 'receiptNumber' },
+  { label: 'Name', value: 'name' },
+  { label: 'Amount', value: 'amount' },
+  { label: 'Note', value: 'note' },
+  { label: 'Status', value: 'status' },
+  { label: 'Created At', value: row => row.createdAt ? new Date(row.createdAt).toLocaleString() : '' },
+  { label: 'Donation Type', value: row => row.donationType ? row.donationType.toUpperCase() : '' },
+  { label: 'Bank Name', value: row => row.bankName || '' },
+  { label: 'Cheque Number', value: row => row.chequeNumber || '' },
+  { label: 'UPI Transaction ID', value: row => row.upiTransactionId || '' },
+  { label: 'Aadhar Card', value: row => row.aadharCard || '' },
+  { label: 'PAN Card', value: row => row.panCard || '' },
+  { label: 'Deposit Acknowledged', value: row => row.depositAcknowledged ? 'Yes' : 'No' },
+  { label: 'Deposit Note', value: row => row.depositNote || '' },
+  { label: 'Deposit Verified', value: row => row.depositVerified ? 'Yes' : 'No' },
+  { label: 'Deposit Verified At', value: row => row.depositVerifiedAt ? new Date(row.depositVerifiedAt).toLocaleString() : '' }
+];
+
+// CSV generation functions
+function generateTrusteeCsv(donations) {
+  const json2csvParser = new Parser({ fields: trusteeFields });
+  return json2csvParser.parse(donations);
 }
 
-/**
- * Build a textual summary from a list of donations
- * For example: total count, sum of amounts, etc.
- */
+function generateVolunteerCsv(donations) {
+  const json2csvParser = new Parser({ fields: volunteerFields });
+  return json2csvParser.parse(donations);
+}
+
+// ---------------------------------------------
+// Helper: Build summary message from donation data
+// ---------------------------------------------
 function buildSummaryMessage(donations) {
   const totalAmount = donations.reduce((sum, d) => sum + d.amount, 0);
   const count = donations.length;
   return `Total Donations: ${count}\nSum of Amounts: ₹${totalAmount}`;
 }
 
-// Helper function to send a single email
+// ---------------------------------------------
+// Helper: Send email
+// ---------------------------------------------
 async function sendEmail(to, subject, text, attachments = []) {
   return transporter.sendMail({
-    from: user,
+    from: emailUser,
     to,
     subject,
     text,
@@ -54,38 +102,33 @@ async function sendEmail(to, subject, text, attachments = []) {
   });
 }
 
-// ============ DAILY =============
+// ---------------------------------------------
+// ADMIN REPORT JOBS
+// ---------------------------------------------
+
+// Daily Report for Admin/Trustees
 exports.sendDailyReport = async () => {
   try {
-    // 1) Date range: last 24 hours
     const now = new Date();
-    const yesterday = new Date(now);
+    const yesterday = new Date();
     yesterday.setDate(yesterday.getDate() - 1);
 
-    // 2) Fetch data. Example: all new "Donation" or "CashDonation" in last 24 hours
-    //    Adjust as needed for your actual logic
     const onlineDonations = await Donation.find({
-      createdAt: { $gte: yesterday, $lte: now }
+      createdAt: { $gte: yesterday, $lte: now },
+      isDeleted: false
     });
     const cashDonations = await CashDonation.find({
-      createdAt: { $gte: yesterday, $lte: now }
+      createdAt: { $gte: yesterday, $lte: now },
+      isDeleted: false
     });
-
-    // Combine or keep separate, up to you
     const allDonations = [...onlineDonations, ...cashDonations];
-
-    // 3) Generate summary, CSV, etc.
     const summary = buildSummaryMessage(allDonations);
-    const csvData = generateCsv(allDonations);
+    const csvData = generateTrusteeCsv(allDonations);
 
-    // 4) Find recipients with frequency = 'daily'
     const recipients = await ReportRecipient.find({ frequency: 'daily' });
-
-    // 5) For each recipient, send an email with attachments
     for (const r of recipients) {
       const subject = 'Daily Donation Report';
       const body = `Hello ${r.email},\n\nHere is the daily donation report.\n${summary}\n\nRegards,\nYour System`;
-
       const attachments = [];
       if (r.formats.includes('csv')) {
         attachments.push({
@@ -93,8 +136,6 @@ exports.sendDailyReport = async () => {
           content: csvData
         });
       }
-      // If they want PDF, etc. you'd generate or attach it here
-
       await sendEmail(r.email, subject, body, attachments);
     }
   } catch (err) {
@@ -102,35 +143,29 @@ exports.sendDailyReport = async () => {
   }
 };
 
-// ============ WEEKLY =============
+// Weekly Report for Admin/Trustees
 exports.sendWeeklyReport = async () => {
   try {
-    // 1) Date range: last 7 days
     const now = new Date();
-    const sevenDaysAgo = new Date(now);
+    const sevenDaysAgo = new Date();
     sevenDaysAgo.setDate(now.getDate() - 7);
 
-    // 2) Fetch relevant donations
     const onlineDonations = await Donation.find({
-      createdAt: { $gte: sevenDaysAgo, $lte: now }
+      createdAt: { $gte: sevenDaysAgo, $lte: now },
+      isDeleted: false
     });
     const cashDonations = await CashDonation.find({
-      createdAt: { $gte: sevenDaysAgo, $lte: now }
+      createdAt: { $gte: sevenDaysAgo, $lte: now },
+      isDeleted: false
     });
     const allDonations = [...onlineDonations, ...cashDonations];
-
-    // 3) Summaries & CSV
     const summary = buildSummaryMessage(allDonations);
-    const csvData = generateCsv(allDonations);
+    const csvData = generateTrusteeCsv(allDonations);
 
-    // 4) Recipients with frequency = 'weekly'
     const recipients = await ReportRecipient.find({ frequency: 'weekly' });
-
-    // 5) Send emails
     for (const r of recipients) {
       const subject = 'Weekly Donation Report';
       const body = `Hello ${r.email},\n\nHere is the weekly donation report.\n${summary}\n\nRegards,\nYour System`;
-
       const attachments = [];
       if (r.formats.includes('csv')) {
         attachments.push({
@@ -138,8 +173,6 @@ exports.sendWeeklyReport = async () => {
           content: csvData
         });
       }
-      // If they want PDF, etc.
-
       await sendEmail(r.email, subject, body, attachments);
     }
   } catch (err) {
@@ -147,31 +180,29 @@ exports.sendWeeklyReport = async () => {
   }
 };
 
-// ============ MONTHLY =============
+// Monthly Report for Admin/Trustees
 exports.sendMonthlyReport = async () => {
   try {
-    // 1) Date range: last 30 days or from the 1st of the month, whichever logic you prefer
     const now = new Date();
-    const thirtyDaysAgo = new Date(now);
+    const thirtyDaysAgo = new Date();
     thirtyDaysAgo.setDate(now.getDate() - 30);
 
     const onlineDonations = await Donation.find({
-      createdAt: { $gte: thirtyDaysAgo, $lte: now }
+      createdAt: { $gte: thirtyDaysAgo, $lte: now },
+      isDeleted: false
     });
     const cashDonations = await CashDonation.find({
-      createdAt: { $gte: thirtyDaysAgo, $lte: now }
+      createdAt: { $gte: thirtyDaysAgo, $lte: now },
+      isDeleted: false
     });
     const allDonations = [...onlineDonations, ...cashDonations];
-
     const summary = buildSummaryMessage(allDonations);
-    const csvData = generateCsv(allDonations);
+    const csvData = generateTrusteeCsv(allDonations);
 
     const recipients = await ReportRecipient.find({ frequency: 'monthly' });
-
     for (const r of recipients) {
       const subject = 'Monthly Donation Report';
       const body = `Hello ${r.email},\n\nHere is the monthly donation report.\n${summary}\n\nRegards,\nYour System`;
-
       const attachments = [];
       if (r.formats.includes('csv')) {
         attachments.push({
@@ -179,10 +210,49 @@ exports.sendMonthlyReport = async () => {
           content: csvData
         });
       }
-
       await sendEmail(r.email, subject, body, attachments);
     }
   } catch (err) {
     console.error('Error sending monthly report:', err);
+  }
+};
+
+// ---------------------------------------------
+// VOLUNTEER DAILY CSV (sent individually to each volunteer)
+// ---------------------------------------------
+exports.sendVolunteerDailyCSVs = async () => {
+  try {
+    const now = new Date();
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+
+    const volunteers = await User.find({ role: 'volunteer' });
+    if (!volunteers.length) return;
+
+    for (const vol of volunteers) {
+      if (!vol.email) continue;
+
+      const volunteerDonations = await CashDonation.find({
+        volunteer: vol._id,
+        createdAt: { $gte: yesterday, $lte: now },
+        isDeleted: false
+      });
+
+      if (!volunteerDonations.length) continue;
+
+      const csvData = generateVolunteerCsv(volunteerDonations);
+      const summary = buildSummaryMessage(volunteerDonations);
+      const subject = 'Your Daily Donation Report';
+      const body = `Hello ${vol.username},\n\nHere is your daily donation report.\n${summary}\n\nRegards,\nYour System`;
+      const attachments = [
+        {
+          filename: `Volunteer_${vol.username}_Daily_${dayjs().format('YYYYMMDD')}.csv`,
+          content: csvData
+        }
+      ];
+      await sendEmail(vol.email, subject, body, attachments);
+    }
+  } catch (err) {
+    console.error('Error sending volunteer daily CSVs:', err);
   }
 };
