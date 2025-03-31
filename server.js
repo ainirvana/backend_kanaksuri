@@ -30,7 +30,8 @@ app.use(cors({
     'https://shreekanaksuriDashboard.aivialabs.com',
     'https://shreekanaksuriahinsadham.com',
     'https://admin.shreekanaksuriahinsadham.com',
-    'https://www.shreekanaksuriahinsadham.com/'
+    'https://www.shreekanaksuriahinsadham.com/',
+    'http://localhost:3000'
   ]
 }));
 app.use(morgan('combined'));
