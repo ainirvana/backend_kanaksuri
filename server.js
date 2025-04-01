@@ -26,12 +26,8 @@ app.use(express.json());
 app.use(helmet());
 app.use(cors({
   origin: [
-    'https://shreekanaksuriahinsadham.aivialabs.com',
-    'https://shreekanaksuriDashboard.aivialabs.com',
-    'https://shreekanaksuriahinsadham.com',
     'https://admin.shreekanaksuriahinsadham.com',
-    'https://www.shreekanaksuriahinsadham.com/',
-    'http://localhost:3000'
+    'https://www.shreekanaksuriahinsadham.com',
   ]
 }));
 app.use(morgan('combined'));

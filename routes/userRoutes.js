@@ -22,13 +22,12 @@
 //     if (existing) {
 //       return res.status(400).json({ error: "User already exists" });
 //     }
-//     // If role is provided and is not 'volunteer', only master_admin can assign it.
+//     // Only master_admin can create non-volunteer accounts
 //     if (role && role !== 'volunteer' && req.user.role !== 'master_admin') {
 //       return res.status(403).json({ error: "Only master admin can create admin accounts" });
 //     }
-//     // Hash password
+//     // Hash password and create user (default role: volunteer)
 //     const hashedPassword = await bcrypt.hash(password, 10);
-//     // Create user with provided role or default to 'volunteer'
 //     const newUser = await User.create({
 //       username,
 //       email,
@@ -94,9 +93,10 @@
 // });
 
 // // -----------------------------------------------------------------
-// // Update user's password
-// // - For self-update, the current password must be supplied.
-// // - For admin reset (reset flag true), only master_admin is allowed.
+// // Update user's password (Unified for all roles)
+// // - For self-update, if the user's firstTime flag is true then skip current password check.
+// // - Otherwise, the current password must be supplied.
+// // - For admin reset (when reset flag is true), only master_admin is allowed.
 // // -----------------------------------------------------------------
 // router.put('/:id', authenticate, async (req, res) => {
 //   try {
@@ -115,7 +115,15 @@
 //       await user.save();
 //       return res.json({ message: "Password reset successful" });
 //     } else {
-//       // Self-update: ensure the user is updating only their own password
+//       // If this is the user's first time update, skip current password check.
+//       if (user.firstTime) {
+//         const hashed = await bcrypt.hash(newPassword, 10);
+//         user.password = hashed;
+//         user.firstTime = false;
+//         await user.save();
+//         return res.json({ message: "Password updated successfully (first time update)" });
+//       }
+//       // Otherwise, ensure the user is updating only their own password.
 //       if (req.user._id.toString() !== req.params.id) {
 //         return res.status(403).json({ error: "Not authorized to update password for this user" });
 //       }
@@ -161,7 +169,6 @@
 
 // // -----------------------------------------------------------------
 // // Volunteer adds a cash donation
-// // - Ensure that a volunteer can only add donations for themselves
 // // -----------------------------------------------------------------
 // router.post('/cash-donation', authenticate, async (req, res) => {
 //   try {
@@ -233,8 +240,7 @@
 // });
 
 // // -----------------------------------------------------------------
-// // BATCH deposit acknowledgment for multiple donation IDs
-// // e.g. volunteer marks multiple donations as deposited at once
+// // Batch deposit acknowledgment for multiple donation IDs
 // // -----------------------------------------------------------------
 // router.patch('/cash-donations/acknowledge', authenticate, async (req, res) => {
 //   try {
@@ -244,11 +250,9 @@
 //     }
 //     for (const id of donationIds) {
 //       const donation = await CashDonation.findById(id);
-//       if (!donation) continue; // skip if not found
-//       // If volunteer, ensure donation belongs to them
+//       if (!donation) continue; // Skip if not found
 //       if (req.user.role === 'volunteer' && String(donation.volunteer) !== String(req.user._id)) {
-//         // skip or throw error; here we skip
-//         continue;
+//         continue; // Skip if volunteer is trying to update someone else's donation
 //       }
 //       donation.depositAcknowledged = true;
 //       donation.depositNote = depositNote;
@@ -351,6 +355,9 @@
 // module.exports = router;
 
 
+
+
+
 // backend/routes/userRoutes.js
 const express = require('express');
 const router = express.Router();
@@ -363,10 +370,9 @@ const jwt = require('jsonwebtoken');
 const { authenticate } = require('../middleware/auth');
 const { authorizeRoles } = require('../middleware/roleMiddleware');
 
-// -----------------------------------------------------------------
-// Register new user (only admin users can register new accounts)
-// - If the requested role is other than 'volunteer', only master_admin can assign it.
-// -----------------------------------------------------------------
+/**
+ * Register new user (only admin can create volunteer; only master_admin can create other roles).
+ */
 router.post('/register', authenticate, async (req, res) => {
   try {
     const { username, email, password, role } = req.body;
@@ -375,12 +381,15 @@ router.post('/register', authenticate, async (req, res) => {
     if (existing) {
       return res.status(400).json({ error: "User already exists" });
     }
-    // Only master_admin can create non-volunteer accounts
+    // If role is provided and is not 'volunteer', only master_admin can assign it
     if (role && role !== 'volunteer' && req.user.role !== 'master_admin') {
       return res.status(403).json({ error: "Only master admin can create admin accounts" });
     }
-    // Hash password and create user (default role: volunteer)
+
+    // Hash password
     const hashedPassword = await bcrypt.hash(password, 10);
+
+    // Create user (default to 'volunteer' if role not provided)
     const newUser = await User.create({
       username,
       email,
@@ -388,6 +397,7 @@ router.post('/register', authenticate, async (req, res) => {
       role: role || 'volunteer',
       firstTime: true
     });
+
     const userObj = newUser.toObject();
     delete userObj.password;
     res.json(userObj);
@@ -397,16 +407,17 @@ router.post('/register', authenticate, async (req, res) => {
   }
 });
 
-// -----------------------------------------------------------------
-// Login route (shared for admin/volunteer)
-// - Generates a JWT token and returns it along with the user data.
-// -----------------------------------------------------------------
+/**
+ * Login route (shared for admin/volunteer).
+ * Generates a JWT token and returns it with user data + firstTime.
+ */
 router.post('/login', async (req, res) => {
   try {
     const { usernameOrEmail, password } = req.body;
     const user = await User.findOne({
       $or: [{ username: usernameOrEmail }, { email: usernameOrEmail }]
     }).select('+password');
+
     if (!user) {
       return res.status(400).json({ error: "Invalid credentials" });
     }
@@ -414,7 +425,7 @@ router.post('/login', async (req, res) => {
     if (!isMatch) {
       return res.status(400).json({ error: "Invalid credentials" });
     }
-    // Generate JWT token with user id and role; expires in 1 day
+    // JWT token
     const token = jwt.sign(
       { _id: user._id, role: user.role },
       process.env.JWT_SECRET || "defaultSecret",
@@ -432,9 +443,9 @@ router.post('/login', async (req, res) => {
   }
 });
 
-// -----------------------------------------------------------------
-// List all users – accessible only to master_admin and admin
-// -----------------------------------------------------------------
+/**
+ * List all users – accessible to master_admin or admin.
+ */
 router.get('/', authenticate, authorizeRoles('master_admin', 'admin'), async (req, res) => {
   try {
     const users = await User.find().select('-password').sort({ createdAt: -1 });
@@ -445,12 +456,13 @@ router.get('/', authenticate, authorizeRoles('master_admin', 'admin'), async (re
   }
 });
 
-// -----------------------------------------------------------------
-// Update user's password (Unified for all roles)
-// - For self-update, if the user's firstTime flag is true then skip current password check.
-// - Otherwise, the current password must be supplied.
-// - For admin reset (when reset flag is true), only master_admin is allowed.
-// -----------------------------------------------------------------
+/**
+ * Update user's password (unified approach for all roles).
+ * Cases:
+ *  1) If reset=true, only master_admin can reset password.  -> skip current password
+ *  2) If firstTime=true, skip current password check.       -> user sets new password
+ *  3) Else normal update requires current password match.
+ */
 router.put('/:id', authenticate, async (req, res) => {
   try {
     const { password, newPassword, reset } = req.body;
@@ -458,6 +470,8 @@ router.put('/:id', authenticate, async (req, res) => {
     if (!user) {
       return res.status(404).json({ error: "User not found" });
     }
+
+    // Admin reset scenario
     if (reset) {
       if (req.user.role !== 'master_admin') {
         return res.status(403).json({ error: "Not authorized to reset password" });
@@ -467,39 +481,40 @@ router.put('/:id', authenticate, async (req, res) => {
       user.firstTime = false;
       await user.save();
       return res.json({ message: "Password reset successful" });
-    } else {
-      // If this is the user's first time update, skip current password check.
-      if (user.firstTime) {
-        const hashed = await bcrypt.hash(newPassword, 10);
-        user.password = hashed;
-        user.firstTime = false;
-        await user.save();
-        return res.json({ message: "Password updated successfully (first time update)" });
-      }
-      // Otherwise, ensure the user is updating only their own password.
-      if (req.user._id.toString() !== req.params.id) {
-        return res.status(403).json({ error: "Not authorized to update password for this user" });
-      }
-      const isMatch = await bcrypt.compare(password, user.password);
-      if (!isMatch) {
-        return res.status(400).json({ error: "Current password incorrect" });
-      }
+    }
+
+    // If firstTime is true, skip current password check
+    if (user.firstTime) {
       const hashed = await bcrypt.hash(newPassword, 10);
       user.password = hashed;
       user.firstTime = false;
       await user.save();
-      return res.json({ message: "Password updated successfully" });
+      return res.json({ message: "Password updated successfully (first time)" });
     }
+
+    // Otherwise, normal update requires current password check
+    if (req.user._id.toString() !== req.params.id) {
+      return res.status(403).json({ error: "Not authorized to update password for this user" });
+    }
+    const isMatch = await bcrypt.compare(password, user.password);
+    if (!isMatch) {
+      return res.status(400).json({ error: "Current password incorrect" });
+    }
+    const hashed = await bcrypt.hash(newPassword, 10);
+    user.password = hashed;
+    user.firstTime = false;
+    await user.save();
+    return res.json({ message: "Password updated successfully" });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Server error" });
   }
 });
 
-// -----------------------------------------------------------------
-// Remove user – Only master_admin can delete admin accounts,
-// and non-master_admin users cannot delete a master_admin.
-// -----------------------------------------------------------------
+/**
+ * Remove user – Only master_admin can delete admin accounts
+ * and non-master_admin cannot delete master_admin.
+ */
 router.delete('/:id', authenticate, async (req, res) => {
   try {
     const userToDelete = await User.findById(req.params.id);
@@ -520,9 +535,9 @@ router.delete('/:id', authenticate, async (req, res) => {
   }
 });
 
-// -----------------------------------------------------------------
-// Volunteer adds a cash donation
-// -----------------------------------------------------------------
+/**
+ * Volunteer adds a cash donation
+ */
 router.post('/cash-donation', authenticate, async (req, res) => {
   try {
     const {
@@ -567,10 +582,9 @@ router.post('/cash-donation', authenticate, async (req, res) => {
   }
 });
 
-// -----------------------------------------------------------------
-// Volunteer updates deposit acknowledgment for a single donation
-// (Used for one donation ID at a time)
-// -----------------------------------------------------------------
+/**
+ * Volunteer updates deposit acknowledgment for a single donation
+ */
 router.patch('/cash-donation/:id/acknowledge', authenticate, async (req, res) => {
   try {
     const { depositNote } = req.body;
@@ -578,7 +592,6 @@ router.patch('/cash-donation/:id/acknowledge', authenticate, async (req, res) =>
     if (!donation) {
       return res.status(404).json({ error: "Donation not found" });
     }
-    // Ensure volunteer owns this donation
     if (req.user.role === 'volunteer' && req.user._id.toString() !== donation.volunteer.toString()) {
       return res.status(403).json({ error: "Not authorized to update this donation" });
     }
@@ -592,9 +605,9 @@ router.patch('/cash-donation/:id/acknowledge', authenticate, async (req, res) =>
   }
 });
 
-// -----------------------------------------------------------------
-// Batch deposit acknowledgment for multiple donation IDs
-// -----------------------------------------------------------------
+/**
+ * BATCH deposit acknowledgment for multiple donation IDs
+ */
 router.patch('/cash-donations/acknowledge', authenticate, async (req, res) => {
   try {
     const { donationIds, depositNote } = req.body;
@@ -603,9 +616,9 @@ router.patch('/cash-donations/acknowledge', authenticate, async (req, res) => {
     }
     for (const id of donationIds) {
       const donation = await CashDonation.findById(id);
-      if (!donation) continue; // Skip if not found
+      if (!donation) continue;
       if (req.user.role === 'volunteer' && String(donation.volunteer) !== String(req.user._id)) {
-        continue; // Skip if volunteer is trying to update someone else's donation
+        continue; // skip if belongs to another volunteer
       }
       donation.depositAcknowledged = true;
       donation.depositNote = depositNote;
@@ -618,10 +631,9 @@ router.patch('/cash-donations/acknowledge', authenticate, async (req, res) => {
   }
 });
 
-// -----------------------------------------------------------------
-// Admin verifies deposit for a cash donation
-// - Only master_admin or accounts users can verify deposit.
-// -----------------------------------------------------------------
+/**
+ * Admin verifies deposit for a cash donation
+ */
 router.patch('/cash-donation/:id/verify-deposit', authenticate, authorizeRoles('master_admin', 'accounts'), async (req, res) => {
   try {
     const donation = await CashDonation.findById(req.params.id);
@@ -639,9 +651,9 @@ router.patch('/cash-donation/:id/verify-deposit', authenticate, authorizeRoles('
   }
 });
 
-// -----------------------------------------------------------------
-// Admin soft deletes a cash donation (marks as deleted)
-// -----------------------------------------------------------------
+/**
+ * Admin soft deletes a cash donation
+ */
 router.patch('/cash-donation/:id/delete', authenticate, authorizeRoles('master_admin', 'admin'), async (req, res) => {
   try {
     const donation = await CashDonation.findById(req.params.id);
@@ -657,9 +669,9 @@ router.patch('/cash-donation/:id/delete', authenticate, authorizeRoles('master_a
   }
 });
 
-// -----------------------------------------------------------------
-// Admin gets all cash donations
-// -----------------------------------------------------------------
+/**
+ * Admin gets all cash donations
+ */
 router.get('/cash-donations', authenticate, authorizeRoles('master_admin', 'admin', 'accounts'), async (req, res) => {
   try {
     const cashDonations = await CashDonation.find()
@@ -672,9 +684,9 @@ router.get('/cash-donations', authenticate, authorizeRoles('master_admin', 'admi
   }
 });
 
-// -----------------------------------------------------------------
-// Volunteer gets their own cash donations
-// -----------------------------------------------------------------
+/**
+ * Volunteer gets their own cash donations
+ */
 router.get('/my-cash-donations/:userId', authenticate, async (req, res) => {
   try {
     if (req.user.role === 'volunteer' && req.user._id.toString() !== req.params.userId) {
@@ -688,9 +700,9 @@ router.get('/my-cash-donations/:userId', authenticate, async (req, res) => {
   }
 });
 
-// -----------------------------------------------------------------
-// Get a single cash donation by ID for shareable receipt link
-// -----------------------------------------------------------------
+/**
+ * Get a single cash donation by ID for shareable receipt link
+ */
 router.get('/cash-donation/:id', async (req, res) => {
   try {
     const donation = await CashDonation.findById(req.params.id)
