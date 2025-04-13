@@ -124,8 +124,7 @@ app.use(morgan('combined'));
 app.use(cors({
   origin: [
     'https://admin.shreekanaksuriahinsadham.com',
-    'https://www.shreekanaksuriahinsadham.com',
-    'http://localhost:3000' // For local dev
+    'https://www.shreekanaksuriahinsadham.com'
   ],
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
