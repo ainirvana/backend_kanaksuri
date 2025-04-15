@@ -409,7 +409,7 @@ router.post('/register', authenticate, async (req, res) => {
 
 /**
  * Login route (shared for admin/volunteer).
- * Generates a JWT token and returns it with user data + firstTime.
+ * Generates a JWT token and returns it along with user data and firstTime flag.
  */
 router.post('/login', async (req, res) => {
   try {
@@ -425,7 +425,7 @@ router.post('/login', async (req, res) => {
     if (!isMatch) {
       return res.status(400).json({ error: "Invalid credentials" });
     }
-    // JWT token
+    // Generate JWT token
     const token = jwt.sign(
       { _id: user._id, role: user.role },
       process.env.JWT_SECRET || "defaultSecret",
@@ -459,9 +459,9 @@ router.get('/', authenticate, authorizeRoles('master_admin', 'admin'), async (re
 /**
  * Update user's password (unified approach for all roles).
  * Cases:
- *  1) If reset=true, only master_admin can reset password.  -> skip current password
- *  2) If firstTime=true, skip current password check.       -> user sets new password
- *  3) Else normal update requires current password match.
+ *   1) If reset=true, only master_admin can reset password (skips current password check).
+ *   2) If firstTime=true, user can set new password without current password.
+ *   3) Otherwise, a normal update requires verifying the current password.
  */
 router.put('/:id', authenticate, async (req, res) => {
   try {
@@ -483,7 +483,7 @@ router.put('/:id', authenticate, async (req, res) => {
       return res.json({ message: "Password reset successful" });
     }
 
-    // If firstTime is true, skip current password check
+    // First-time update (skip current password check)
     if (user.firstTime) {
       const hashed = await bcrypt.hash(newPassword, 10);
       user.password = hashed;
@@ -492,7 +492,7 @@ router.put('/:id', authenticate, async (req, res) => {
       return res.json({ message: "Password updated successfully (first time)" });
     }
 
-    // Otherwise, normal update requires current password check
+    // Normal update: ensure the user is updating their own password
     if (req.user._id.toString() !== req.params.id) {
       return res.status(403).json({ error: "Not authorized to update password for this user" });
     }
@@ -512,8 +512,8 @@ router.put('/:id', authenticate, async (req, res) => {
 });
 
 /**
- * Remove user – Only master_admin can delete admin accounts
- * and non-master_admin cannot delete master_admin.
+ * Remove user – Only master_admin can delete admin accounts,
+ * and non-master_admin users cannot delete master_admin accounts.
  */
 router.delete('/:id', authenticate, async (req, res) => {
   try {
@@ -583,7 +583,7 @@ router.post('/cash-donation', authenticate, async (req, res) => {
 });
 
 /**
- * Volunteer updates deposit acknowledgment for a single donation
+ * Volunteer updates deposit acknowledgment for a single donation.
  */
 router.patch('/cash-donation/:id/acknowledge', authenticate, async (req, res) => {
   try {
@@ -592,6 +592,7 @@ router.patch('/cash-donation/:id/acknowledge', authenticate, async (req, res) =>
     if (!donation) {
       return res.status(404).json({ error: "Donation not found" });
     }
+    // Ensure that a volunteer can only update their own donation
     if (req.user.role === 'volunteer' && req.user._id.toString() !== donation.volunteer.toString()) {
       return res.status(403).json({ error: "Not authorized to update this donation" });
     }
@@ -606,7 +607,7 @@ router.patch('/cash-donation/:id/acknowledge', authenticate, async (req, res) =>
 });
 
 /**
- * BATCH deposit acknowledgment for multiple donation IDs
+ * BATCH deposit acknowledgment for multiple donation IDs.
  */
 router.patch('/cash-donations/acknowledge', authenticate, async (req, res) => {
   try {
@@ -617,8 +618,9 @@ router.patch('/cash-donations/acknowledge', authenticate, async (req, res) => {
     for (const id of donationIds) {
       const donation = await CashDonation.findById(id);
       if (!donation) continue;
+      // Only update donations that belong to the volunteer (if role is volunteer)
       if (req.user.role === 'volunteer' && String(donation.volunteer) !== String(req.user._id)) {
-        continue; // skip if belongs to another volunteer
+        continue;
       }
       donation.depositAcknowledged = true;
       donation.depositNote = depositNote;
@@ -632,7 +634,7 @@ router.patch('/cash-donations/acknowledge', authenticate, async (req, res) => {
 });
 
 /**
- * Admin verifies deposit for a cash donation
+ * Admin verifies deposit for a cash donation.
  */
 router.patch('/cash-donation/:id/verify-deposit', authenticate, authorizeRoles('master_admin', 'accounts'), async (req, res) => {
   try {
@@ -652,7 +654,7 @@ router.patch('/cash-donation/:id/verify-deposit', authenticate, authorizeRoles('
 });
 
 /**
- * Admin soft deletes a cash donation
+ * Admin soft deletes a cash donation.
  */
 router.patch('/cash-donation/:id/delete', authenticate, authorizeRoles('master_admin', 'admin'), async (req, res) => {
   try {
@@ -670,7 +672,7 @@ router.patch('/cash-donation/:id/delete', authenticate, authorizeRoles('master_a
 });
 
 /**
- * Admin gets all cash donations
+ * Admin gets all cash donations.
  */
 router.get('/cash-donations', authenticate, authorizeRoles('master_admin', 'admin', 'accounts'), async (req, res) => {
   try {
@@ -685,7 +687,7 @@ router.get('/cash-donations', authenticate, authorizeRoles('master_admin', 'admi
 });
 
 /**
- * Volunteer gets their own cash donations
+ * Volunteer gets their own cash donations.
  */
 router.get('/my-cash-donations/:userId', authenticate, async (req, res) => {
   try {
@@ -701,7 +703,7 @@ router.get('/my-cash-donations/:userId', authenticate, async (req, res) => {
 });
 
 /**
- * Get a single cash donation by ID for shareable receipt link
+ * Get a single cash donation by ID for shareable receipt link.
  */
 router.get('/cash-donation/:id', async (req, res) => {
   try {
